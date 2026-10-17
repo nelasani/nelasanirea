@@ -266,7 +266,16 @@ search, semantic tracing, and version comparison use the preserved values.
 Event and listener nodes likewise preserve the complete event name in
 `properties.event_name`. Event role keys use the same reserved-prefix string
 digest rule, scoped to the emitter; repeated registrations, removals, and
-dispatches keep one event per exact emitter/name pair. Long event labels use
+dispatches keep one event per exact emitter/name pair. `this` receivers use
+source scopes: ordinary functions and object literals have separate scopes,
+arrows retain their enclosing receiver, and class instance/static sides remain
+separate. Local classes connected by possible inheritance share a candidate
+family, including conditional bases; unrelated classes with unresolved external
+bases remain separate. These scopes do not prove runtime receiver equality:
+`this` relations stay candidates with explicit event unknowns. Receiver rebinding
+through `.call`, `.apply`, or `.bind` is not resolved. Decorators and computed
+member keys use the enclosing receiver. New analyses change event IDs for
+`this` emitters; query new seeds from the new graph. Long event labels use
 `event`, and listener labels use the shorter of `<method>:<name>` and
 `<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
 change hashed event IDs and longer event/listener labels; query the preserved

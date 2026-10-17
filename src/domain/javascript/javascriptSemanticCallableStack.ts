@@ -6,9 +6,9 @@ import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
  * Innermost-last stack of admitted callables during one enter/exit traversal.
  *
  * Single owner for semantic callable ownership. A computed object/class method
- * key is evaluated before the method's parameter and body environments, so the
- * method is set aside while its key is traversed and the enclosing callable
- * owns every fact recovered from the key. Collectors share this tracker so
+ * key or decorator (including parameter decorators) is evaluated outside the
+ * method's parameter and body environments, so the method is set aside while
+ * that expression is traversed. Collectors share this tracker so
  * calls, captures, effects, promises, and object operations agree.
  */
 export interface SemanticCallableStack<Callable> {
@@ -21,6 +21,7 @@ export interface SemanticCallableStack<Callable> {
 interface CallableFrame<Callable> {
   readonly callableId: string;
   readonly callable: Callable;
+  readonly node: t.Node;
 }
 
 /**
@@ -46,12 +47,14 @@ export const createSemanticCallableStack = <Callable>(
   return {
     callables,
     enter: (node, parent) => {
+      const active = frames.at(-1);
       if (
-        parent !== null &&
-        (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
-        parent.computed &&
-        parent.key === node &&
-        frames.at(-1)?.callableId === semanticCallableIdForNode(parent)
+        active !== undefined &&
+        (t.isObjectMethod(active.node) ||
+          t.isClassMethod(active.node) ||
+          t.isClassPrivateMethod(active.node)) &&
+        (t.isDecorator(node) ||
+          (active.node === parent && parent.computed && parent.key === node))
       ) {
         const method = pop();
         if (method !== undefined) suspendedMethods.set(node, method);
@@ -59,7 +62,7 @@ export const createSemanticCallableStack = <Callable>(
       const callableId = semanticCallableIdForNode(node);
       if (callableId === null) return;
       const callable = admit(callableId);
-      if (callable !== undefined) push({ callableId, callable });
+      if (callable !== undefined) push({ callableId, callable, node });
     },
     exit: (node) => {
       const callableId = semanticCallableIdForNode(node);

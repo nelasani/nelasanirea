@@ -6,6 +6,7 @@ import type {
   JavaScriptSemanticTimerOperation,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { createSemanticThisReceiverKey } from "./javascriptSemanticThisReceivers.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
@@ -100,13 +101,14 @@ export const collectJavaScriptSemanticAsyncEffects = (
   const timers: TimerCandidate[] = [];
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
+  const thisReceiverKey = createSemanticThisReceiverKey(state);
   const ancestors: t.Node[] = [];
   traverseJavaScriptAst(program, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const ownerCallableId = callableStack.callables.at(-1) ?? null;
-        collectEvent(node, ownerCallableId, state, events);
+        collectEvent(node, ownerCallableId, state, events, thisReceiverKey);
         collectTimer({
           node,
           ownerCallableId,
@@ -133,6 +135,7 @@ const collectEvent = (
   ownerCallableId: string | null,
   state: JavaScriptSemanticAnalysisState,
   output: JavaScriptSemanticEventOperation[],
+  thisReceiverKey: (node: t.ThisExpression) => string,
 ): void => {
   const member = dataEffectMemberCallee(node);
   if (member === null) return;
@@ -147,7 +150,7 @@ const collectEvent = (
   const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
     ? node.arguments[1]
     : undefined;
-  const emitter = emitterIdentity(member.object, state);
+  const emitter = emitterIdentity(member.object, state, thisReceiverKey);
   const eventName = dataEffectLiteralString(eventArgument);
   output.push({
     eventId: `event:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
@@ -184,6 +187,7 @@ const eventKind = (
 const emitterIdentity = (
   node: t.Expression | t.Super,
   state: JavaScriptSemanticAnalysisState,
+  thisReceiverKey: (node: t.ThisExpression) => string,
 ): {
   readonly key: string;
   readonly bindingId: string | null;
@@ -204,7 +208,7 @@ const emitterIdentity = (
     };
   }
   if (t.isThisExpression(node))
-    return { key: "this", bindingId: null, complete: true };
+    return { key: thisReceiverKey(node), bindingId: null, complete: false };
   return {
     key: `expression:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     bindingId: null,
