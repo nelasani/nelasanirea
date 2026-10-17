@@ -70,10 +70,17 @@ export interface AdbRunLimits {
   readonly maxOutputBytes: number;
 }
 
+/** Keep the selected device separate from the file addressed by the command. */
+export interface AdbCommandTarget {
+  readonly device: string;
+  readonly path?: string;
+  readonly localPath?: string;
+}
+
 /** Run one bounded adb invocation and keep its exact failure shape. */
 export const runAdbCapture = async (
   operation: string,
-  targetPath: string,
+  target: AdbCommandTarget,
   binary: string,
   arguments_: readonly string[],
   limits: AdbRunLimits,
@@ -116,19 +123,23 @@ export const runAdbCapture = async (
         ),
       );
     const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
-    if (/unauthorized/iu.test(excerpt))
-      return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+    // Device-state words inside a reported file name are not device verdicts.
+    const diagnostic = excerpt
+      .replace(
+        /^(?:\* daemon (?:not running; starting now at [^\r\n]*|started successfully)\r?\n)*/u,
+        "",
+      )
+      .replace(
+        /^(?:adb:\s*)?(?:error:\s*)?(?:(?:failed to get feature set|connect failed):\s*)?/iu,
+        "",
       );
     if (
-      /device[^\n]*not found|device offline|still authorizing|more than one device/iu.test(
-        excerpt,
+      /^(?:unauthorized\b|device(?: '[^'\n]*')? (?:unauthorized\b|offline\b|not found\b|still authorizing\b)|still authorizing\b|more than one device\b)/iu.test(
+        diagnostic,
       )
     )
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
+        new AnalysisUnsupportedTargetError(operation, target.device, excerpt, {
           cause,
         }),
       );
@@ -136,12 +147,30 @@ export const runAdbCapture = async (
       /No such file or directory|Permission denied|read: Permission denied/iu.test(
         excerpt,
       )
-    )
+    ) {
+      const localPath = target.localPath;
+      const path =
+        localPath !== undefined &&
+        [
+          "cannot create",
+          "cannot create file/directory",
+          "cannot stat",
+          "cannot open",
+          "failed to stat local file",
+          "failed to access",
+          "failed to stat",
+          "failed to open",
+        ].some((verb) =>
+          [localPath, `'${localPath}'`, `"${localPath}"`].some((operand) =>
+            diagnostic.startsWith(`${verb} ${operand}:`),
+          ),
+        )
+          ? localPath
+          : (target.path ?? target.device);
       return err(
-        new AnalysisUnsupportedTargetError(operation, targetPath, excerpt, {
-          cause,
-        }),
+        new AnalysisUnsupportedTargetError(operation, path, excerpt, { cause }),
       );
+    }
     if (failure.killed)
       return err(
         new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
@@ -210,7 +239,7 @@ export const probeAdbPathExistence = async (
 ): Promise<Result<boolean, AnalysisError>> => {
   const probed = await runAdbCapture(
     operation,
-    path,
+    { device: serial, path },
     binary,
     adbArguments(serial, ["shell", "test", "-e", path]),
     limits,

@@ -161,7 +161,7 @@ it("keeps a physical failure even when the later abort reason is that same error
   });
   const result = await runAdbCapture(
     "inspect_adb_device",
-    "device",
+    { device: "device" },
     "/host/adb",
     [],
     { timeoutMs: 100, maxOutputBytes: 1024 },
